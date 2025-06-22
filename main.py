@@ -6,7 +6,7 @@ import os, shutil, uuid
 
 app = FastAPI()
 
-# CORS para frontend se comunicar com backend
+# CORS liberado para testes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuração Supabase via variáveis de ambiente
+# Conecta com Supabase
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -26,12 +26,12 @@ async def upload_files(file: UploadFile = File(...)):
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Simulando geração de catálogo (substituir depois)
+    # Simula geração de HTML
     html_path = temp_filename.replace(".csv", ".html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write("<html><body><h1>Catálogo gerado!</h1></body></html>")
 
-    # Upload para Supabase
+    # Envia pro Supabase Storage
     with open(html_path, "rb") as f:
         file_key = f"catalogos/{os.path.basename(html_path)}"
         supabase.storage.from_('catalogos').upload(file_key, f, {"content-type": "text/html"})
