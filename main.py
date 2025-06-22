@@ -38,3 +38,10 @@ async def upload_files(file: UploadFile = File(...)):
 
     url = f"{SUPABASE_URL.replace('.supabase.co', '.supabase.storage.co')}/storage/v1/object/public/catalogos/{os.path.basename(html_path)}"
     return JSONResponse({"url": url})
+
+
+from fastapi.openapi.docs import get_swagger_ui_html
+
+@app.get("/")
+async def swagger_ui():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Catálogo SaaS - API")
