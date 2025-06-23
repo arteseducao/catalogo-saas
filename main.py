@@ -1,13 +1,12 @@
+import uuid
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html
-from supabase import create_client, Client
-import os, csv, shutil, uuid
-from bs4 import BeautifulSoup
+from supabase import create_client
+import os
 
 app = FastAPI()
 
+# Permitir CORS para facilitar testes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,70 +15,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def swagger_ui():
-    return get_swagger_ui_html(openapi_url="/openapi.json", title="Catálogo SaaS - API")
+# Variáveis de ambiente (substitua pelos valores reais ou configure no Render)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-def gerar_catalogo(csv_path, template_path, html_path):
-    print("Abrindo CSV:", csv_path)
-    with open(csv_path, newline='', encoding='utf-8') as f:
-        reader = csv.DictReader(f, delimiter=';')
-        produtos = list(reader)
-    print("Produtos lidos:", len(produtos))
-
-    print("Carregando template:", template_path)
-    with open(template_path, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f, 'html.parser')
-
-    container = soup.find('div', {'id': 'catalogo-container'})
-    if not container:
-        print("Criando div #catalogo-container (não encontrada no template)")
-        container = soup.new_tag('div', id='catalogo-container')
-        soup.body.append(container)
-
-    for p in produtos:
-        card = soup.new_tag('div', attrs={'class': 'produto'})
-        nome = soup.new_tag('h3')
-        nome.string = p.get('Descrição', 'Produto sem nome')
-        card.append(nome)
-
-        preco = soup.new_tag('p')
-        preco.string = f"R$ {p.get('Preço', '0,00')}"
-        card.append(preco)
-
-        container.append(card)
-
-    print("Salvando HTML em:", html_path)
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(str(soup))
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @app.post("/upload/")
-async def upload_files(file: UploadFile = File(...)):
-    try:
-        temp_csv = f"/tmp/{uuid.uuid4()}_{file.filename}"
-        with open(temp_csv, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        print("Arquivo CSV recebido:", temp_csv)
+async def upload_file(file: UploadFile = File(...)):
+    contents = await file.read()
 
-        html_output = temp_csv.replace(".csv", ".html")
-        template_path = "templates/catalogo_com_estoque.html"
-        gerar_catalogo(temp_csv, template_path, html_output)
+    # Gere um nome único para o arquivo
+    supabase_file_name = f"{uuid.uuid4()}_{file.filename}"
+    path_in_bucket = f"catalogos/{supabase_file_name}"
 
-        with open(html_output, "rb") as f:
-            file_key = f"catalogos/{os.path.basename(html_output)}"
-            print("Enviando HTML para Supabase como:", file_key)
-            supabase.storage.from_('catalogos').upload(file_key, f, {
-                "content-type": "text/html",
-                "x-upsert": "true"
-            })
+    # Upload do conteúdo
+    supabase.storage.from_("catalogos").upload(
+        path=path_in_bucket,
+        file=contents,
+        file_options={"content-type": "text/html"}
+    )
 
-        url = f"{SUPABASE_URL.replace('.supabase.co', '.supabase.storage.co')}/storage/v1/object/public/catalogos/{os.path.basename(html_output)}"
-        print("URL final do catálogo:", url)
-        return JSONResponse({"url": url})
-    except Exception as e:
-        print("Erro geral:", str(e))
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    # URL corrigida com subpasta 'catalogos/'
+    public_url = f"https://{SUPABASE_URL}/storage/v1/object/public/catalogos/catalogos/{supabase_file_name}"
+    return {"url": public_url}
