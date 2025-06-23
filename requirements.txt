@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-supabase
-python-dotenv
-aiofiles
-beautifulsoup4
+pandas
+jinja2
 python-multipart
+requests
+supabase
+
