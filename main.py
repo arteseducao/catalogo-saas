@@ -1,44 +1,67 @@
 
-import os
 import uuid
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-from supabase import create_client
-from fastapi.responses import JSONResponse
-
-load_dotenv()
+import os
+import shutil
+import pandas as pd
+from supabase import create_client, Client
+from jinja2 import Environment, FileSystemLoader
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+BUCKET_NAME = "catalogos"
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
-    try:
-        file_content = await file.read()
-        extension = file.filename.split(".")[-1]
-        content_type = "text/html" if extension == "html" else "text/csv"
-        unique_id = str(uuid.uuid4())
-        supabase_file_name = f"{unique_id}_{file.filename}"
+async def upload_csv(file: UploadFile = File(...)):
+    # Salvar o CSV temporariamente
+    contents = await file.read()
+    file_id = str(uuid.uuid4())
+    original_name = file.filename.replace(".csv", "")
+    csv_filename = f"{file_id}_{file.filename}"
+    csv_path = f"/tmp/{csv_filename}"
+    with open(csv_path, "wb") as f:
+        f.write(contents)
 
-        supabase.storage.from_("catalogos").upload(
-            supabase_file_name, file_content, file_options={"content-type": content_type}
+    # Carregar CSV
+    df = pd.read_csv(csv_path, sep=";", dtype=str).fillna("")
+
+    # Agrupar por categoria mantendo ordem
+    df["Categoria_ordem"] = df.groupby("Categoria").ngroup()
+    df = df.sort_values(["Categoria_ordem"])
+
+    # Carregar o template
+    env = Environment(loader=FileSystemLoader("/opt/render/project/src/template"))
+    template = env.get_template("catalogo_com_estoque.html")
+
+    # Renderizar HTML
+    categorias = df["Categoria"].unique()
+    produtos_por_categoria = {cat: df[df["Categoria"] == cat].to_dict("records") for cat in categorias}
+    html = template.render(produtos_por_categoria=produtos_por_categoria)
+
+    # Salvar HTML
+    html_filename = f"{file_id}_{original_name}.html"
+    html_path = f"/tmp/{html_filename}"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    # Upload para Supabase
+    with open(html_path, "rb") as f:
+        supabase.storage.from_(BUCKET_NAME).upload(
+            f"catalogos/{html_filename}", f, {"content-type": "text/html"}
         )
 
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/catalogos/{supabase_file_name}"
-
-        return JSONResponse(content={"url": public_url})
-
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/catalogos/catalogos/{html_filename}"
+    return {"url": public_url}
