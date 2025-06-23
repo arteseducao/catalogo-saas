@@ -1,37 +1,44 @@
+
+import os
 import uuid
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 from supabase import create_client
-import os
+from fastapi.responses import JSONResponse
+
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
-    contents = await file.read()
-    supabase_file_name = f"{uuid.uuid4()}_{file.filename}"
-    path_in_bucket = f"catalogos/{supabase_file_name}"
+    try:
+        file_content = await file.read()
+        extension = file.filename.split(".")[-1]
+        content_type = "text/html" if extension == "html" else "text/csv"
+        unique_id = str(uuid.uuid4())
+        supabase_file_name = f"{unique_id}_{file.filename}"
 
-    # Upload para o Supabase
-    supabase.storage.from_("catalogos").upload(
-        path=path_in_bucket,
-        file=contents,
-        file_options={"content-type": "text/html"}
-    )
+        supabase.storage.from_("catalogos").upload(
+            supabase_file_name, file_content, file_options={"content-type": content_type}
+        )
 
-    # URL final corrigida (sem duplicar pasta)
-    public_url = f"{SUPABASE_URL}/storage/v1/object/public/catalogos/{supabase_file_name}"
-    return {"url": public_url}
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/catalogos/{supabase_file_name}"
+
+        return JSONResponse(content={"url": public_url})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
