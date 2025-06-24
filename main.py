@@ -25,38 +25,40 @@ app.add_middleware(
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
-    # 1. Salvar CSV com nome único
-    csv_filename = f"{uuid.uuid4()}_{file.filename}"
-    with open(csv_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # 2. Ler CSV
     try:
-        df = pd.read_csv(csv_filename, sep=";", encoding="utf-8")
-    except Exception as e:
-        return {"error": f"Erro ao ler CSV: {str(e)}"}
+        filename = file.filename
+        temp_file_path = f"temp_{filename}"
 
-    # 3. Gerar HTML com Jinja2
-    env = Environment(loader=FileSystemLoader("templates"))
-    try:
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Lê a planilha CSV
+        df = pd.read_csv(temp_file_path, sep=';', encoding='utf-8')
+
+        # Gera HTML com Jinja2
+        env = Environment(loader=FileSystemLoader("templates"))
         template = env.get_template("catalogo_com_estoque.html")
+        html_content = template.render(produtos=df.to_dict(orient='records'))
+
+        # Salva o HTML localmente
+        html_filename = f"{uuid.uuid4()}_{filename.replace('.csv', '.html')}"
+        html_path = os.path.join("catalogos", html_filename)
+
+        os.makedirs("catalogos", exist_ok=True)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        # Upload para Supabase Storage
+        with open(html_path, "rb") as f:
+            supabase.storage.from_(BUCKET_NAME).upload(f"catalogos/{html_filename}", f, {"upsert": True})
+
+        url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/catalogos/{html_filename}"
+
+        # Remove arquivos temporários
+        os.remove(temp_file_path)
+        os.remove(html_path)
+
+        return {"url": url}
+
     except Exception as e:
-        return {"error": f"Erro ao carregar template HTML: {str(e)}"}
-
-    html_output = template.render(produtos=df.to_dict(orient="records"))
-
-    # 4. Salvar HTML
-    html_filename = csv_filename.replace(".csv", ".html")
-    with open(html_filename, "w", encoding="utf-8") as f:
-        f.write(html_output)
-
-    # 5. Enviar HTML para o Supabase
-    try:
-        with open(html_filename, "rb") as f:
-            supabase.storage.from_(BUCKET_NAME).upload(f"catalogos/{html_filename}", f)
-    except Exception as e:
-        return {"error": f"Erro ao enviar HTML para o Supabase: {str(e)}"}
-
-    # 6. Retornar link público
-    url = f"{SUPABASE_URL}/storage/v1/object/public/catalogos/{html_filename}"
-    return {"url": url}
+        return {"error": str(e)}
